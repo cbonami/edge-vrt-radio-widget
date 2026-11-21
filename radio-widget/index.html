@@ -66,14 +66,14 @@
         title: "Radio 1",
         stream: "https://quantumcast.vrtcdn.be/radio1/mp3-128/quantumcast.vrtcdn.be/",
         fallback: "https://icecast.vrtcdn.be/radio1-high.mp3",
-        metadata: "https://api.streamabc.net/metadata/channel/vrt_athgmuwrgcq_erfq.json"
+        metadata: "https://radio.vrtcdn.be/vrt/radio1/live.m3u8"
       },
       news: { title: "VRT NWS" },
       stubru: {
         title: "StuBru",
         stream: "https://quantumcast.vrtcdn.be/stubru-new/mp3-128/quantumcast.vrtcdn.be/",
         fallback: "https://icecast.vrtcdn.be/stubru-high.mp3",
-        metadata: "https://api.streamabc.net/metadata/channel/vrt_8dzskup20cx_4nj7.json"
+        metadata: "https://radio.vrtcdn.be/vrt/stubru/live.m3u8"
       }
     };
     const defaultNewsUrl = "https://icecast.vrtcdn.be/vrtnws-high.mp3";
@@ -109,6 +109,7 @@
     let frame;
     let metadataRequest;
     let metadataTimer;
+    let metadataPlaylist;
 
     function drawSpectrum() {
       if (!spectrumContext) return;
@@ -160,8 +161,95 @@
       clearTimeout(metadataTimer);
       metadataRequest?.abort();
       metadataRequest = undefined;
+      metadataPlaylist = undefined;
       track.textContent = message;
       artist.textContent = "";
+    }
+
+    function syncSafeSize(bytes, offset) {
+      return bytes[offset] * 2097152 + bytes[offset + 1] * 16384
+        + bytes[offset + 2] * 128 + bytes[offset + 3];
+    }
+
+    function parseId3(tag) {
+      const end = 10 + syncSafeSize(tag, 6);
+      if (tag[3] !== 4 || end > tag.length) return null;
+      const decoder = new TextDecoder();
+      const fields = {};
+      for (let offset = 10; offset + 10 <= end;) {
+        const id = decoder.decode(tag.slice(offset, offset + 4));
+        const size = syncSafeSize(tag, offset + 4);
+        const start = offset + 10;
+        offset = start + size;
+        if (size < 1 || offset > end) break;
+        if ((id === "TIT2" || id === "TPE1") && (tag[start] === 0 || tag[start] === 3)) {
+          const encoding = tag[start] === 0 ? "windows-1252" : "utf-8";
+          fields[id] = new TextDecoder(encoding).decode(tag.slice(start + 1, offset)).replace(/\0.*$/s, "").trim();
+        }
+      }
+      return { song: fields.TIT2, artist: fields.TPE1 };
+    }
+
+    function readSegmentTrack(bytes) {
+      let metadataPid;
+      let tag = [];
+      let latest;
+      for (let offset = 0; offset + 188 <= bytes.length; offset += 188) {
+        if (bytes[offset] !== 0x47) break;
+        const pid = ((bytes[offset + 1] & 31) << 8) | bytes[offset + 2];
+        const control = (bytes[offset + 3] >> 4) & 3;
+        if (!(control & 1)) continue;
+        const end = offset + 188;
+        let start = offset + 4;
+        if (control & 2) start += 1 + bytes[start];
+        if (bytes[offset + 1] & 0x40) {
+          if (pid === metadataPid) {
+            metadataPid = undefined;
+            tag = [];
+          }
+          if (start + 9 >= end || bytes[start] !== 0 || bytes[start + 1] !== 0 || bytes[start + 2] !== 1) continue;
+          start += 9 + bytes[start + 8];
+          if (start + 3 > end || bytes[start] !== 73 || bytes[start + 1] !== 68 || bytes[start + 2] !== 51) continue;
+          metadataPid = pid;
+          tag = [];
+        }
+        if (pid !== metadataPid || start >= end) continue;
+        tag.push(...bytes.subarray(start, end));
+        if (tag.length < 10) continue;
+        const size = 10 + syncSafeSize(tag, 6);
+        if (size > 8192) {
+          metadataPid = undefined;
+          tag = [];
+        } else if (tag.length >= size) {
+          latest = parseId3(Uint8Array.from(tag)) ?? latest;
+          metadataPid = undefined;
+          tag = [];
+        }
+      }
+      return latest;
+    }
+
+    async function readTrack(url, signal) {
+      const options = { signal: AbortSignal.any([signal, AbortSignal.timeout(7000)]), cache: "no-store" };
+      if (!metadataPlaylist) {
+        const master = await fetch(url, options);
+        if (!master.ok) return null;
+        const playlistUri = (await master.text()).match(/^#EXT-X-MEDIA:TYPE=AUDIO,.*?URI="([^"]+)"/m)?.[1];
+        signal.throwIfAborted();
+        if (!playlistUri) return null;
+        metadataPlaylist = new URL(playlistUri, master.url);
+      }
+      const playlist = await fetch(metadataPlaylist, options);
+      if (!playlist.ok) {
+        signal.throwIfAborted();
+        metadataPlaylist = undefined;
+        return null;
+      }
+      const segments = (await playlist.text()).split(/\r?\n/).filter(line => line && !line.startsWith("#"));
+      const latest = segments.at(-1);
+      if (!latest) return null;
+      const segment = await fetch(new URL(latest, playlist.url), options);
+      return segment.ok ? readSegmentTrack(new Uint8Array(await segment.arrayBuffer())) : null;
     }
 
     async function updateMetadata() {
@@ -179,16 +267,18 @@
       const request = new AbortController();
       metadataRequest = request;
       try {
-        const response = await fetch(metadata, {
-          signal: AbortSignal.any([request.signal, AbortSignal.timeout(6000)]),
-          cache: "no-store"
-        });
-        const item = response.ok && response.status !== 204 ? await response.json() : null;
+        const item = await readTrack(metadata, request.signal);
         if (request.signal.aborted) return;
-        track.textContent = item?.song?.trim() || "Geen nummerinformatie beschikbaar";
-        artist.textContent = item?.artist?.trim() || "";
+        const stationCredit = /^(?:NEW )?(?:VRT )?(?:Radio 1|Studio Brussel|StuBru)$/i;
+        const hasTrack = item?.song && item.artist && item.song !== item.artist && !stationCredit.test(item.artist);
+        track.textContent = hasTrack ? item.song : "Geen nummerinformatie beschikbaar";
+        artist.textContent = hasTrack ? item.artist : "";
       } catch {
-        if (!request.signal.aborted) track.textContent = "Geen nummerinformatie beschikbaar";
+        if (!request.signal.aborted) {
+          metadataPlaylist = undefined;
+          track.textContent = "Geen nummerinformatie beschikbaar";
+          artist.textContent = "";
+        }
       } finally {
         if (!request.signal.aborted) metadataTimer = setTimeout(updateMetadata, 15000);
       }

@@ -10,6 +10,8 @@ Een Nederlandstalige radiowidget voor de Corsair XENEON EDGE met Radio 1 en StuB
 
 Tik op **Radio 1**, **VRT NWS** of **StuBru** om die zender te starten. Gebruik de grote knop om af te spelen of te pauzeren.
 
+In **Medium** wordt **Nu op de radio** ongeveer elke 15 seconden bijgewerkt. Bij het starten of wisselen van zender kan het even duren voor de titel en artiest verschijnen.
+
 ## Instellingen
 
 | Instelling | Werking |
@@ -22,7 +24,7 @@ Tik op **Radio 1**, **VRT NWS** of **StuBru** om die zender te starten. Gebruik 
 
 ## Verbinding en machtigingen
 
-iCUE vraagt luidsprekertoegang en toegang tot `icecast.vrtcdn.be`, `quantumcast.vrtcdn.be` en `vrt.streamabc.net` via HTTPS voor de livestreams en hun doorverwijzingen. Medium vraagt de nummerinformatie op bij `api.streamabc.net` tijdens het afspelen van Radio 1 of StuBru. Voor een zelf ingesteld adres kan iCUE tijdens het afspelen extra netwerktoegang vragen.
+iCUE vraagt luidsprekertoegang en HTTPS-toegang tot `icecast.vrtcdn.be`, `quantumcast.vrtcdn.be` en `streamabc.net` voor de livestreams en hun doorverwijzingen. Tijdens het afspelen van Radio 1 of StuBru leest Medium de nummerinformatie rechtstreeks uit korte HLS-fragmenten via `radio.vrtcdn.be` en subdomeinen van `streamabc.net`. Tijdens gesproken uitzendingen of jingles is er soms geen nummerinformatie. Voor een zelf ingesteld adres kan iCUE tijdens het afspelen extra netwerktoegang vragen.
 
 Voor VRT NWS speelt de widget het MP3-nieuwsbulletin rechtstreeks af via `progressive-audio.vrtcdn.be`, zodat de browser het signaal kan analyseren. Als die verbinding mislukt, probeert de widget de officiële VRT-link. Bij die omweg blijven de spectrumbalken stil. Na afloop haalt de widget het bulletin opnieuw op.
 
