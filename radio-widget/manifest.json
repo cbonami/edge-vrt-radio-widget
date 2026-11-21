@@ -3,7 +3,7 @@
   "id": "com.cbona.vrt-radio",
   "name": "VRT Radio",
   "description": "Luister naar Radio 1, VRT NWS en StuBru",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "preview_icon": "resources/icon.svg",
   "min_app_version": "5.54",
   "min_framework_version": "1.10.0",

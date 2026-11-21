@@ -23,6 +23,9 @@ Tik op **Kopieer** rechts naast een nummer om `artiest – titel` op je klembord
 | Volume | Start op 65%. De schuifregelaar onthoudt het laatst gekozen volume. |
 | Accentkleur | Past de afspeelknop, zenderselectie en volumeregelaar aan. |
 | Streamadres Radio 1, VRT NWS en StuBru | Elke zender heeft een eigen veld met een vooraf ingevuld standaardadres. Pas het aan met een volledig HTTPS-streamadres. Maak het veld leeg om terug te keren naar het standaardadres. |
+| Nummerinformatie Radio 1, VRT NWS en StuBru | Stel per zender een apart HTTPS-adres voor artiest en titel in. Radio 1 en StuBru zijn vooraf ingevuld. Maak het veld leeg om de ingebouwde bron te gebruiken. VRT NWS heeft standaard geen bron voor nummerinformatie. |
+
+Een eigen bron voor nummerinformatie kan een HLS-afspeellijst zijn met ID3-tags in MPEG-TS-segmenten, of een JSON-endpoint met `artist` en `title` (of `song`) als tekstvelden. De server moet browserverzoeken vanaf de widget toestaan. iCUE kan extra netwerktoegang vragen.
 
 ## Verbinding en machtigingen
 

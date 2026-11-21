@@ -12,6 +12,9 @@
   <meta name="x-icue-property" content="radio1Url" data-label="'Streamadres Radio 1'" data-type="textfield" data-default="'https://quantumcast.vrtcdn.be/radio1/mp3-128/quantumcast.vrtcdn.be/'" />
   <meta name="x-icue-property" content="newsUrl" data-label="'Streamadres VRT NWS'" data-type="textfield" data-default="'https://icecast.vrtcdn.be/vrtnws-high.mp3'" />
   <meta name="x-icue-property" content="stubruUrl" data-label="'Streamadres StuBru'" data-type="textfield" data-default="'https://quantumcast.vrtcdn.be/stubru-new/mp3-128/quantumcast.vrtcdn.be/'" />
+  <meta name="x-icue-property" content="radio1MetadataUrl" data-label="'Nummerinformatie Radio 1'" data-type="textfield" data-default="'https://radio.vrtcdn.be/vrt/radio1/live.m3u8'" />
+  <meta name="x-icue-property" content="newsMetadataUrl" data-label="'Nummerinformatie VRT NWS'" data-type="textfield" data-default="''" />
+  <meta name="x-icue-property" content="stubruMetadataUrl" data-label="'Nummerinformatie StuBru'" data-type="textfield" data-default="'https://radio.vrtcdn.be/vrt/stubru/live.m3u8'" />
 </head>
 <body>
   <style>
@@ -73,14 +76,16 @@
       radio1: {
         title: "Radio 1",
         streamSetting: "radio1Url",
+        metadataSetting: "radio1MetadataUrl",
         stream: "https://quantumcast.vrtcdn.be/radio1/mp3-128/quantumcast.vrtcdn.be/",
         fallback: "https://icecast.vrtcdn.be/radio1-high.mp3",
         metadata: "https://radio.vrtcdn.be/vrt/radio1/live.m3u8"
       },
-      news: { title: "VRT NWS", streamSetting: "newsUrl" },
+      news: { title: "VRT NWS", streamSetting: "newsUrl", metadataSetting: "newsMetadataUrl" },
       stubru: {
         title: "StuBru",
         streamSetting: "stubruUrl",
+        metadataSetting: "stubruMetadataUrl",
         stream: "https://quantumcast.vrtcdn.be/stubru-new/mp3-128/quantumcast.vrtcdn.be/",
         fallback: "https://icecast.vrtcdn.be/stubru-high.mp3",
         metadata: "https://radio.vrtcdn.be/vrt/stubru/live.m3u8"
@@ -103,7 +108,8 @@
     const medium = matchMedia("(min-height: 500px)");
     const settings = {
       defaultStation: "radio1", autoplay: false, radioVolume: 65, accent: "#f5b95f",
-      radio1Url: "", newsUrl: "", stubruUrl: ""
+      radio1Url: "", newsUrl: "", stubruUrl: "",
+      radio1MetadataUrl: "", newsMetadataUrl: "", stubruMetadataUrl: ""
     };
     const invalidStreamMessage = "Controleer het streamadres in de instellingen";
     const storageKey = "vrt-radio:" + (globalThis.uniqueId || "browser");
@@ -292,21 +298,39 @@
 
     async function readTrack(url, signal) {
       const options = { signal: AbortSignal.any([signal, AbortSignal.timeout(7000)]), cache: "no-store" };
+      let playlist;
+      let lines;
       if (!metadataPlaylist) {
         const master = await fetch(url, options);
-        if (!master.ok) return null;
-        const playlistUri = (await master.text()).match(/^#EXT-X-MEDIA:TYPE=AUDIO,.*?URI="([^"]+)"/m)?.[1];
+        if (!master.ok || master.status === 204) return null;
+        const body = (await master.text()).trim();
+        if (!body.startsWith("#EXTM3U")) {
+          const item = JSON.parse(body);
+          const song = item?.song ?? item?.title;
+          return {
+            song: typeof song === "string" ? song.trim() : "",
+            artist: typeof item?.artist === "string" ? item.artist.trim() : ""
+          };
+        }
+        const playlistUri = body.match(/^#EXT-X-MEDIA:TYPE=AUDIO,.*?URI="([^"]+)"/m)?.[1]
+          ?? body.match(/^#EXT-X-STREAM-INF:[^\r\n]*\r?\n([^#\r\n][^\r\n]*)/m)?.[1];
         signal.throwIfAborted();
-        if (!playlistUri) return null;
-        metadataPlaylist = new URL(playlistUri, master.url);
+        metadataPlaylist = new URL(playlistUri ?? master.url, master.url);
+        if (!playlistUri) {
+          playlist = master;
+          lines = body;
+        }
       }
-      const playlist = await fetch(metadataPlaylist, options);
-      if (!playlist.ok) {
-        signal.throwIfAborted();
-        metadataPlaylist = undefined;
-        return null;
+      if (!playlist) {
+        playlist = await fetch(metadataPlaylist, options);
+        if (!playlist.ok) {
+          signal.throwIfAborted();
+          metadataPlaylist = undefined;
+          return null;
+        }
+        lines = await playlist.text();
       }
-      const segments = (await playlist.text()).split(/\r?\n/).filter(line => line && !line.startsWith("#"));
+      const segments = lines.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith("#"));
       const latest = segments.at(-1);
       if (!latest) return null;
       const segment = await fetch(new URL(latest, playlist.url), options);
@@ -320,16 +344,22 @@
         clearMetadata();
         return;
       }
-      const { title, metadata } = stations[station];
-      if (!metadata) {
+      const { title, metadata, metadataSetting } = stations[station];
+      const address = settings[metadataSetting].trim() || metadata;
+      if (!address) {
         showTrack(title);
+        return;
+      }
+      const url = parseWebUrl(address);
+      if (!url) {
+        showTrack("Controleer het adres voor nummerinformatie");
         return;
       }
       const request = new AbortController();
       metadataRequest = request;
       let item;
       try {
-        item = await readTrack(metadata, request.signal);
+        item = await readTrack(url, request.signal);
       } catch {
         if (!request.signal.aborted) metadataPlaylist = undefined;
       }
@@ -366,17 +396,21 @@
       }
     }
 
+    function parseWebUrl(address) {
+      try {
+        const url = new URL(address);
+        if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) return url.href;
+      } catch {}
+      return "";
+    }
+
     function streamUrl() {
       const selected = stations[station];
       const defaultUrl = selected.stream ?? defaultNewsUrl;
-      try {
-        const url = new URL(settings[selected.streamSetting].trim() || defaultUrl);
-        if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return "";
-        if (url.href !== defaultUrl) return url.href;
-        if (station === "news") return useFallback ? defaultNewsUrl : newsAudioUrl;
-        return useFallback ? selected.fallback : selected.stream;
-      } catch {}
-      return "";
+      const url = parseWebUrl(settings[selected.streamSetting].trim() || defaultUrl);
+      if (url !== defaultUrl) return url;
+      if (station === "news") return useFallback ? defaultNewsUrl : newsAudioUrl;
+      return useFallback ? selected.fallback : selected.stream;
     }
 
     function resetStream() {
@@ -498,7 +532,10 @@
         accent: typeof accent === "undefined" ? undefined : accent,
         radio1Url: typeof radio1Url === "undefined" ? undefined : radio1Url,
         newsUrl: typeof newsUrl === "undefined" ? undefined : newsUrl,
-        stubruUrl: typeof stubruUrl === "undefined" ? undefined : stubruUrl
+        stubruUrl: typeof stubruUrl === "undefined" ? undefined : stubruUrl,
+        radio1MetadataUrl: typeof radio1MetadataUrl === "undefined" ? undefined : radio1MetadataUrl,
+        newsMetadataUrl: typeof newsMetadataUrl === "undefined" ? undefined : newsMetadataUrl,
+        stubruMetadataUrl: typeof stubruMetadataUrl === "undefined" ? undefined : stubruMetadataUrl
       };
       for (const name of Object.keys(settings)) {
         settings[name] = payload?.settings?.[name] ?? controls[name] ?? settings[name];
@@ -519,12 +556,15 @@
       if (!spectrumInput) drawSpectrum();
       const start = !initialized && settings.autoplay;
       initialized = true;
-      const streamSetting = stations[station].streamSetting;
+      const { streamSetting, metadataSetting } = stations[station];
       if (start || (wantsPlayback && (previous.defaultStation !== settings.defaultStation ||
           previous[streamSetting] !== settings[streamSetting]))) {
         retryCount = 0;
         useFallback = false;
         startStream();
+      } else if (wantsPlayback && previous[metadataSetting] !== settings[metadataSetting]) {
+        clearMetadata();
+        updateMetadata();
       } else if (!wantsPlayback) {
         render(streamUrl() ? "Gestopt" : invalidStreamMessage);
       }
