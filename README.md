@@ -10,7 +10,9 @@ Een Nederlandstalige radiowidget voor de Corsair XENEON EDGE met Radio 1 en StuB
 
 Tik op **Radio 1**, **VRT NWS** of **StuBru** om die zender te starten. Gebruik de grote knop om af te spelen of te pauzeren.
 
-In **Medium** wordt **Nu op de radio** ongeveer elke 15 seconden bijgewerkt. Bij het starten of wisselen van zender kan het even duren voor de titel en artiest verschijnen.
+In **Medium** wordt **Nu op de radio** ongeveer elke 15 seconden bijgewerkt. Bij het starten of wisselen van zender kan het even duren voor de titel en artiest verschijnen. Als een update geen nummerinformatie oplevert, blijft het laatst bevestigde nummer ongeveer een minuut zichtbaar.
+
+Tik op **Kopieer** rechts naast een nummer om `artiest – titel` op je klembord te zetten. Plak de tekst in bijvoorbeeld YouTube Music. iCUE vraagt hiervoor toegang tot het klembord.
 
 ## Instellingen
 
@@ -20,7 +22,7 @@ In **Medium** wordt **Nu op de radio** ongeveer elke 15 seconden bijgewerkt. Bij
 | Automatisch afspelen | Standaard uit. Als iCUE automatisch afspelen blokkeert, verschijnt **Tik op afspelen**. |
 | Volume | Start op 65%. De schuifregelaar onthoudt het laatst gekozen volume. |
 | Accentkleur | Past de afspeelknop, zenderselectie en volumeregelaar aan. |
-| Streamadres VRT NWS | Het officiële VRT-adres staat al ingevuld. Laat het veld leeg om dat adres te gebruiken, of vul een eigen HTTPS-streamadres in. |
+| Streamadres Radio 1, VRT NWS en StuBru | Elke zender heeft een eigen veld met een vooraf ingevuld standaardadres. Pas het aan met een volledig HTTPS-streamadres. Maak het veld leeg om terug te keren naar het standaardadres. |
 
 ## Verbinding en machtigingen
 
@@ -32,9 +34,10 @@ Bij verbindingsverlies probeert de widget opnieuw na 2, 5, 10 en daarna telkens 
 
 ## Zelf bouwen
 
-De widgetbron staat in [radio-widget/](./radio-widget/) en heeft geen runtime-afhankelijkheden. Gebruik de [Corsair WidgetBuilder CLI](https://www.corsair.com/es/ls/explorer/diy-builder/accessories/how-to-create-a-custom-widget-for-the-xeneon-edge/) om de bron te valideren en het installatiebestand opnieuw te maken.
+De widgetbron staat in [radio-widget/](./radio-widget/) en heeft geen runtime-afhankelijkheden. iCUE 5.54.46 verwacht `clipboard-read-write` in het manifest. WidgetBuilder CLI 0.5.2 verwacht hier underscores en weigert die spelling. Maak het installatiebestand daarom rechtstreeks vanuit de bronmap.
 
 ```powershell
-icuewidget validate radio-widget
-icuewidget package radio-widget -o vrt-radio.icuewidget
+$zip = Join-Path $env:TEMP ("vrt-radio-" + [guid]::NewGuid() + ".zip")
+[IO.Compression.ZipFile]::CreateFromDirectory((Resolve-Path radio-widget).Path, $zip)
+Move-Item -LiteralPath $zip -Destination vrt-radio.icuewidget -Force
 ```

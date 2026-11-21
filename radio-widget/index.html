@@ -9,7 +9,9 @@
   <meta name="x-icue-property" content="autoplay" data-label="'Automatisch afspelen'" data-type="switch" data-default="false" />
   <meta name="x-icue-property" content="radioVolume" data-label="'Volume'" data-type="slider" data-default="65" data-min="0" data-max="100" data-step="1" data-unit-label="'%'" />
   <meta name="x-icue-property" content="accent" data-label="'Accentkleur'" data-type="color" data-default="'#f5b95f'" />
+  <meta name="x-icue-property" content="radio1Url" data-label="'Streamadres Radio 1'" data-type="textfield" data-default="'https://quantumcast.vrtcdn.be/radio1/mp3-128/quantumcast.vrtcdn.be/'" />
   <meta name="x-icue-property" content="newsUrl" data-label="'Streamadres VRT NWS'" data-type="textfield" data-default="'https://icecast.vrtcdn.be/vrtnws-high.mp3'" />
+  <meta name="x-icue-property" content="stubruUrl" data-label="'Streamadres StuBru'" data-type="textfield" data-default="'https://quantumcast.vrtcdn.be/stubru-new/mp3-128/quantumcast.vrtcdn.be/'" />
 </head>
 <body>
   <style>
@@ -28,6 +30,9 @@
     .now-playing { display: none; min-width: 0; }
     .now-playing p { margin: 3px 0; overflow-wrap: anywhere; }
     .now-playing .caption, #artist { color: #d1d6de; font-size: .85rem; }
+    .track-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    #track { min-width: 0; }
+    #copy-track { flex: 0 0 auto; min-width: 7rem; min-height: 44px; padding: 0 10px; border: 1px solid #505761; border-radius: 9px; background: #353a43; color: #f6f7f8; font-size: .75rem; }
     @media (min-height: 500px) {
       main { grid-template-rows: auto 1fr auto auto auto; }
       .now-playing { display: block; min-height: 116px; padding: 14px 18px; background: #1e2229; border-radius: 14px; }
@@ -51,7 +56,10 @@
     <canvas id="spectrum" aria-hidden="true"></canvas>
     <section class="now-playing" aria-label="Nu op de radio">
       <p class="caption">Nu op de radio</p>
-      <p id="track">—</p>
+      <div class="track-row">
+        <p id="track">—</p>
+        <button id="copy-track" type="button" aria-live="polite" hidden>Kopieer</button>
+      </div>
       <p id="artist"></p>
     </section>
     <label class="volume" for="volume">Volume
@@ -64,13 +72,15 @@
     const stations = {
       radio1: {
         title: "Radio 1",
+        streamSetting: "radio1Url",
         stream: "https://quantumcast.vrtcdn.be/radio1/mp3-128/quantumcast.vrtcdn.be/",
         fallback: "https://icecast.vrtcdn.be/radio1-high.mp3",
         metadata: "https://radio.vrtcdn.be/vrt/radio1/live.m3u8"
       },
-      news: { title: "VRT NWS" },
+      news: { title: "VRT NWS", streamSetting: "newsUrl" },
       stubru: {
         title: "StuBru",
+        streamSetting: "stubruUrl",
         stream: "https://quantumcast.vrtcdn.be/stubru-new/mp3-128/quantumcast.vrtcdn.be/",
         fallback: "https://icecast.vrtcdn.be/stubru-high.mp3",
         metadata: "https://radio.vrtcdn.be/vrt/stubru/live.m3u8"
@@ -89,8 +99,13 @@
     const spectrumContext = spectrum.getContext("2d");
     const track = document.querySelector("#track");
     const artist = document.querySelector("#artist");
+    const copyTrack = document.querySelector("#copy-track");
     const medium = matchMedia("(min-height: 500px)");
-    const settings = { defaultStation: "radio1", autoplay: false, radioVolume: 65, accent: "#f5b95f", newsUrl: "" };
+    const settings = {
+      defaultStation: "radio1", autoplay: false, radioVolume: 65, accent: "#f5b95f",
+      radio1Url: "", newsUrl: "", stubruUrl: ""
+    };
+    const invalidStreamMessage = "Controleer het streamadres in de instellingen";
     const storageKey = "vrt-radio:" + (globalThis.uniqueId || "browser");
     let remembered = {};
     try { remembered = JSON.parse(localStorage.getItem(storageKey) ?? "{}") ?? {}; } catch {}
@@ -110,6 +125,8 @@
     let metadataRequest;
     let metadataTimer;
     let metadataPlaylist;
+    let lastTrackAt = -Infinity;
+    let copyFeedbackTimer;
 
     function drawSpectrum() {
       if (!spectrumContext) return;
@@ -157,13 +174,57 @@
       } catch {}
     }
 
+    function showTrack(title, performer = "") {
+      if (track.textContent !== title || artist.textContent !== performer) {
+        clearTimeout(copyFeedbackTimer);
+        copyTrack.textContent = "Kopieer";
+      }
+      track.textContent = title;
+      artist.textContent = performer;
+      copyTrack.hidden = !performer;
+    }
+
+    function copyWithSelection(text) {
+      const field = document.createElement("textarea");
+      field.value = text;
+      field.readOnly = true;
+      field.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+      document.body.append(field);
+      try {
+        field.select();
+        return document.execCommand("copy");
+      } finally {
+        field.remove();
+        if (!copyTrack.hidden) copyTrack.focus({ preventScroll: true });
+      }
+    }
+
+    copyTrack.addEventListener("click", async () => {
+      if (copyTrack.hidden) return;
+      const text = artist.textContent + " – " + track.textContent;
+      let copied = false;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+          copied = true;
+        }
+      } catch {}
+      if (!copied) {
+        try { copied = copyWithSelection(text); } catch {}
+      }
+      if (copyTrack.hidden || text !== artist.textContent + " – " + track.textContent) return;
+      copyTrack.textContent = copied ? "Gekopieerd" : "Mislukt";
+      clearTimeout(copyFeedbackTimer);
+      copyFeedbackTimer = setTimeout(() => { copyTrack.textContent = "Kopieer"; }, 1800);
+    });
+
     function clearMetadata(message = "—") {
       clearTimeout(metadataTimer);
       metadataRequest?.abort();
       metadataRequest = undefined;
       metadataPlaylist = undefined;
-      track.textContent = message;
-      artist.textContent = "";
+      lastTrackAt = -Infinity;
+      showTrack(message);
     }
 
     function syncSafeSize(bytes, offset) {
@@ -255,33 +316,35 @@
     async function updateMetadata() {
       clearTimeout(metadataTimer);
       metadataRequest?.abort();
-      if (!medium.matches || audio.paused || audio.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+      if (!medium.matches || audio.paused) {
         clearMetadata();
         return;
       }
       const { title, metadata } = stations[station];
       if (!metadata) {
-        track.textContent = title;
+        showTrack(title);
         return;
       }
       const request = new AbortController();
       metadataRequest = request;
+      let item;
       try {
-        const item = await readTrack(metadata, request.signal);
-        if (request.signal.aborted) return;
-        const stationCredit = /^(?:NEW )?(?:VRT )?(?:Radio 1|Studio Brussel|StuBru)$/i;
-        const hasTrack = item?.song && item.artist && item.song !== item.artist && !stationCredit.test(item.artist);
-        track.textContent = hasTrack ? item.song : "Geen nummerinformatie beschikbaar";
-        artist.textContent = hasTrack ? item.artist : "";
+        item = await readTrack(metadata, request.signal);
       } catch {
-        if (!request.signal.aborted) {
-          metadataPlaylist = undefined;
-          track.textContent = "Geen nummerinformatie beschikbaar";
-          artist.textContent = "";
-        }
-      } finally {
-        if (!request.signal.aborted) metadataTimer = setTimeout(updateMetadata, 15000);
+        if (!request.signal.aborted) metadataPlaylist = undefined;
       }
+      if (request.signal.aborted) return;
+
+      const stationCredit = /^(?:NEW )?(?:VRT )?(?:Radio 1|Studio Brussel|StuBru)$/i;
+      const hasTrack = item?.song && item.artist && item.song !== item.artist && !stationCredit.test(item.artist);
+      const now = Date.now();
+      if (hasTrack) {
+        lastTrackAt = now;
+        showTrack(item.song, item.artist);
+      } else if (now - lastTrackAt >= 60000) {
+        showTrack("Geen nummerinformatie beschikbaar");
+      }
+      metadataTimer = setTimeout(updateMetadata, 15000);
     }
 
     function remember() {
@@ -304,13 +367,14 @@
     }
 
     function streamUrl() {
-      if (station !== "news") {
-        return useFallback ? stations[station].fallback : stations[station].stream;
-      }
+      const selected = stations[station];
+      const defaultUrl = selected.stream ?? defaultNewsUrl;
       try {
-        const url = new URL(settings.newsUrl.trim() || defaultNewsUrl);
-        if (url.href === defaultNewsUrl && !useFallback) return newsAudioUrl;
-        if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) return url.href;
+        const url = new URL(settings[selected.streamSetting].trim() || defaultUrl);
+        if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return "";
+        if (url.href !== defaultUrl) return url.href;
+        if (station === "news") return useFallback ? defaultNewsUrl : newsAudioUrl;
+        return useFallback ? selected.fallback : selected.stream;
       } catch {}
       return "";
     }
@@ -364,7 +428,7 @@
       resetStream();
       const url = streamUrl();
       if (!url) {
-        stop("Stel het streamadres voor VRT NWS in");
+        stop(invalidStreamMessage);
         return;
       }
       wantsPlayback = true;
@@ -432,7 +496,9 @@
         autoplay: typeof autoplay === "undefined" ? undefined : autoplay,
         radioVolume: typeof radioVolume === "undefined" ? undefined : radioVolume,
         accent: typeof accent === "undefined" ? undefined : accent,
-        newsUrl: typeof newsUrl === "undefined" ? undefined : newsUrl
+        radio1Url: typeof radio1Url === "undefined" ? undefined : radio1Url,
+        newsUrl: typeof newsUrl === "undefined" ? undefined : newsUrl,
+        stubruUrl: typeof stubruUrl === "undefined" ? undefined : stubruUrl
       };
       for (const name of Object.keys(settings)) {
         settings[name] = payload?.settings?.[name] ?? controls[name] ?? settings[name];
@@ -453,13 +519,14 @@
       if (!spectrumInput) drawSpectrum();
       const start = !initialized && settings.autoplay;
       initialized = true;
+      const streamSetting = stations[station].streamSetting;
       if (start || (wantsPlayback && (previous.defaultStation !== settings.defaultStation ||
-          (station === "news" && previous.newsUrl !== settings.newsUrl)))) {
+          previous[streamSetting] !== settings[streamSetting]))) {
         retryCount = 0;
         useFallback = false;
         startStream();
       } else if (!wantsPlayback) {
-        render(streamUrl() ? "Gestopt" : "Stel het streamadres voor VRT NWS in");
+        render(streamUrl() ? "Gestopt" : invalidStreamMessage);
       }
     }
 
@@ -467,7 +534,7 @@
     if (typeof iCUE_initialized !== "undefined" && iCUE_initialized) applySettings();
     else {
       setVolume(remembered.volume ?? settings.radioVolume);
-      render(streamUrl() ? "Gestopt" : "Stel het streamadres voor VRT NWS in");
+      render(streamUrl() ? "Gestopt" : invalidStreamMessage);
       drawSpectrum();
     }
   </script>
