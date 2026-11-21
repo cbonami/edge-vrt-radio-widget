@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>'VRT Radio'</title>
   <link rel="icon" href="resources/icon.svg" />
-  <meta name="x-icue-property" content="defaultStation" data-label="'Standaardzender'" data-type="combobox" data-default="'radio1'" data-values="[{'key':'radio1','value':'Radio 1'},{'key':'news','value':'VRT NWS'}]" />
+  <meta name="x-icue-property" content="defaultStation" data-label="'Standaardzender'" data-type="combobox" data-default="'radio1'" data-values="[{'key':'radio1','value':'Radio 1'},{'key':'news','value':'VRT NWS'},{'key':'stubru','value':'StuBru'}]" />
   <meta name="x-icue-property" content="autoplay" data-label="'Automatisch afspelen'" data-type="switch" data-default="false" />
   <meta name="x-icue-property" content="radioVolume" data-label="'Volume'" data-type="slider" data-default="65" data-min="0" data-max="100" data-step="1" data-unit-label="'%'" />
   <meta name="x-icue-property" content="accent" data-label="'Accentkleur'" data-type="color" data-default="'#f5b95f'" />
@@ -17,7 +17,7 @@
     * { box-sizing: border-box; }
     body { margin: 0; background: #15181d; color: #f6f7f8; }
     main { width: min(100%, 840px); height: 100dvh; margin: auto; padding: clamp(12px, 5vmin, 32px) clamp(16px, 8vmin, 40px); display: grid; grid-template-rows: auto 1fr auto auto; gap: clamp(6px, 2vmin, 14px); }
-    nav { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border: 1px solid #3f454e; border-radius: 16px; background: #1e2229; }
+    nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; border: 1px solid #3f454e; border-radius: 16px; background: #1e2229; }
     button { font: inherit; border: 0; cursor: pointer; touch-action: manipulation; }
     nav button { min-height: 48px; border-radius: 11px; color: #eef0f3; background: transparent; }
     nav button[aria-pressed="true"] { background: #353a43; box-shadow: inset 0 -3px var(--accent); }
@@ -42,6 +42,7 @@
     <nav aria-label="Zender">
       <button type="button" data-station="radio1" aria-pressed="true">Radio 1</button>
       <button type="button" data-station="news" aria-pressed="false">VRT NWS</button>
+      <button type="button" data-station="stubru" aria-pressed="false">StuBru</button>
     </nav>
     <div class="transport">
       <button id="play" type="button" aria-label="Afspelen"><span aria-hidden="true">▶</span></button>
@@ -60,11 +61,23 @@
     <audio preload="none"></audio>
   </main>
   <script>
-    const radioUrl = "https://quantumcast.vrtcdn.be/radio1/mp3-128/quantumcast.vrtcdn.be/";
-    const fallbackRadioUrl = "https://icecast.vrtcdn.be/radio1-high.mp3";
+    const stations = {
+      radio1: {
+        title: "Radio 1",
+        stream: "https://quantumcast.vrtcdn.be/radio1/mp3-128/quantumcast.vrtcdn.be/",
+        fallback: "https://icecast.vrtcdn.be/radio1-high.mp3",
+        metadata: "https://api.streamabc.net/metadata/channel/vrt_athgmuwrgcq_erfq.json"
+      },
+      news: { title: "VRT NWS" },
+      stubru: {
+        title: "StuBru",
+        stream: "https://quantumcast.vrtcdn.be/stubru-new/mp3-128/quantumcast.vrtcdn.be/",
+        fallback: "https://icecast.vrtcdn.be/stubru-high.mp3",
+        metadata: "https://api.streamabc.net/metadata/channel/vrt_8dzskup20cx_4nj7.json"
+      }
+    };
     const defaultNewsUrl = "https://icecast.vrtcdn.be/vrtnws-high.mp3";
     const newsAudioUrl = "https://progressive-audio.vrtcdn.be/content/fixed/11_11niws-snip_hi.mp3";
-    const metadataUrl = "https://api.streamabc.net/metadata/channel/vrt_athgmuwrgcq_erfq.json";
     const retryDelays = [2, 5, 10, 30];
     const audio = document.querySelector("audio");
     const buttons = document.querySelectorAll("[data-station]");
@@ -81,7 +94,7 @@
     const storageKey = "vrt-radio:" + (globalThis.uniqueId || "browser");
     let remembered = {};
     try { remembered = JSON.parse(localStorage.getItem(storageKey) ?? "{}") ?? {}; } catch {}
-    let station = remembered.station === "news" ? "news" : "radio1";
+    let station = Object.hasOwn(stations, remembered.station) ? remembered.station : "radio1";
     let wantsPlayback = false;
     let retryCount = 0;
     let retryTimer;
@@ -158,14 +171,15 @@
         clearMetadata();
         return;
       }
-      if (station !== "radio1") {
-        track.textContent = "VRT NWS";
+      const { title, metadata } = stations[station];
+      if (!metadata) {
+        track.textContent = title;
         return;
       }
       const request = new AbortController();
       metadataRequest = request;
       try {
-        const response = await fetch(metadataUrl, {
+        const response = await fetch(metadata, {
           signal: AbortSignal.any([request.signal, AbortSignal.timeout(6000)]),
           cache: "no-store"
         });
@@ -200,7 +214,9 @@
     }
 
     function streamUrl() {
-      if (station === "radio1") return useFallback ? fallbackRadioUrl : radioUrl;
+      if (station !== "news") {
+        return useFallback ? stations[station].fallback : stations[station].stream;
+      }
       try {
         const url = new URL(settings.newsUrl.trim() || defaultNewsUrl);
         if (url.href === defaultNewsUrl && !useFallback) return newsAudioUrl;
@@ -302,7 +318,7 @@
       startSpectrum();
       updateMetadata();
       if (navigator.mediaSession && typeof MediaMetadata === "function") {
-        navigator.mediaSession.metadata = new MediaMetadata({ title: station === "radio1" ? "Radio 1" : "VRT NWS" });
+        navigator.mediaSession.metadata = new MediaMetadata({ title: stations[station].title });
       }
     });
     audio.addEventListener("waiting", waitForAudio);
@@ -332,7 +348,7 @@
         settings[name] = payload?.settings?.[name] ?? controls[name] ?? settings[name];
       }
       if (initialized ? settings.defaultStation !== previous.defaultStation : !remembered.station) {
-        station = settings.defaultStation === "news" ? "news" : "radio1";
+        station = Object.hasOwn(stations, settings.defaultStation) ? settings.defaultStation : "radio1";
         if (initialized) {
           delete remembered.station;
           remember();
