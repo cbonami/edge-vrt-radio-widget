@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>'VRT Radio'</title>
+  <link rel="icon" href="resources/icon.svg" />
+  <meta name="x-icue-property" content="defaultStation" data-label="'Standaardzender'" data-type="combobox" data-default="'radio1'" data-values="[{'key':'radio1','value':'Radio 1'},{'key':'news','value':'VRT NWS'}]" />
+  <meta name="x-icue-property" content="autoplay" data-label="'Automatisch afspelen'" data-type="switch" data-default="false" />
+  <meta name="x-icue-property" content="radioVolume" data-label="'Volume'" data-type="slider" data-default="65" data-min="0" data-max="100" data-step="1" data-unit-label="'%'" />
+  <meta name="x-icue-property" content="accent" data-label="'Accentkleur'" data-type="color" data-default="'#f5b95f'" />
+  <meta name="x-icue-property" content="newsUrl" data-label="'Streamadres VRT NWS'" data-type="textfield" data-default="'https://icecast.vrtcdn.be/vrtnws-high.mp3'" />
+</head>
+<body>
+  <style>
+    :root { color-scheme: dark; --accent: #f5b95f; font: 600 clamp(16px, 6vmin, 24px)/1.25 "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #15181d; color: #f6f7f8; }
+    main { width: min(100%, 840px); height: 100dvh; margin: auto; padding: clamp(12px, 5vmin, 32px) clamp(16px, 8vmin, 40px); display: grid; grid-template-rows: auto 1fr auto auto; gap: clamp(6px, 2vmin, 14px); }
+    nav { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border: 1px solid #3f454e; border-radius: 16px; background: #1e2229; }
+    button { font: inherit; border: 0; cursor: pointer; touch-action: manipulation; }
+    nav button { min-height: 48px; border-radius: 11px; color: #eef0f3; background: transparent; }
+    nav button[aria-pressed="true"] { background: #353a43; box-shadow: inset 0 -3px var(--accent); }
+    .transport { display: grid; place-content: center; justify-items: center; gap: 8px; min-height: 0; }
+    #play { width: clamp(60px, 26vmin, 106px); aspect-ratio: 1; border-radius: 50%; background: var(--accent); color: #11151a; font-size: clamp(30px, 10vmin, 46px); }
+    #status { margin: 0; text-align: center; color: #d1d6de; font-size: .85rem; }
+    #spectrum { display: block; width: 100%; height: clamp(30px, 13vmin, 84px); color: var(--accent); }
+    .now-playing { display: none; min-width: 0; }
+    .now-playing p { margin: 3px 0; overflow-wrap: anywhere; }
+    .now-playing .caption, #artist { color: #d1d6de; font-size: .85rem; }
+    @media (min-height: 500px) {
+      main { grid-template-rows: auto 1fr auto auto auto; }
+      .now-playing { display: block; min-height: 116px; padding: 14px 18px; background: #1e2229; border-radius: 14px; }
+      #track, #artist { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+    }
+    .volume { display: grid; grid-template-columns: auto 1fr 5ch; align-items: center; gap: 14px; }
+    input { width: 100%; height: 44px; margin: 0; accent-color: var(--accent); touch-action: pan-y; }
+    output { text-align: right; font-variant-numeric: tabular-nums; }
+    :focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+  </style>
+  <main>
+    <nav aria-label="Zender">
+      <button type="button" data-station="radio1" aria-pressed="true">Radio 1</button>
+      <button type="button" data-station="news" aria-pressed="false">VRT NWS</button>
+    </nav>
+    <div class="transport">
+      <button id="play" type="button" aria-label="Afspelen"><span aria-hidden="true">▶</span></button>
+      <p id="status" role="status">Gestopt</p>
+    </div>
+    <canvas id="spectrum" aria-hidden="true"></canvas>
+    <section class="now-playing" aria-label="Nu op de radio">
+      <p class="caption">Nu op de radio</p>
+      <p id="track">—</p>
+      <p id="artist"></p>
+    </section>
+    <label class="volume" for="volume">Volume
+      <input id="volume" type="range" min="0" max="100" value="65">
+      <output id="level" for="volume">65%</output>
+    </label>
+    <audio preload="none"></audio>
+  </main>
+  <script>
+    const radioUrl = "https://quantumcast.vrtcdn.be/radio1/mp3-128/quantumcast.vrtcdn.be/";
+    const fallbackRadioUrl = "https://icecast.vrtcdn.be/radio1-high.mp3";
+    const defaultNewsUrl = "https://icecast.vrtcdn.be/vrtnws-high.mp3";
+    const newsAudioUrl = "https://progressive-audio.vrtcdn.be/content/fixed/11_11niws-snip_hi.mp3";
+    const metadataUrl = "https://api.streamabc.net/metadata/channel/vrt_athgmuwrgcq_erfq.json";
+    const retryDelays = [2, 5, 10, 30];
+    const audio = document.querySelector("audio");
+    const buttons = document.querySelectorAll("[data-station]");
+    const playButton = document.querySelector("#play");
+    const status = document.querySelector("#status");
+    const volume = document.querySelector("#volume");
+    const level = document.querySelector("#level");
+    const spectrum = document.querySelector("#spectrum");
+    const spectrumContext = spectrum.getContext("2d");
+    const track = document.querySelector("#track");
+    const artist = document.querySelector("#artist");
+    const medium = matchMedia("(min-height: 500px)");
+    const settings = { defaultStation: "radio1", autoplay: false, radioVolume: 65, accent: "#f5b95f", newsUrl: "" };
+    const storageKey = "vrt-radio:" + (globalThis.uniqueId || "browser");
+    let remembered = {};
+    try { remembered = JSON.parse(localStorage.getItem(storageKey) ?? "{}") ?? {}; } catch {}
+    let station = remembered.station === "news" ? "news" : "radio1";
+    let wantsPlayback = false;
+    let retryCount = 0;
+    let retryTimer;
+    let watchdog;
+    let attempt = 0;
+    let initialized = false;
+    let useFallback = false;
+    let audioContext;
+    let analyser;
+    let frequencyBins;
+    let spectrumInput;
+    let frame;
+    let metadataRequest;
+    let metadataTimer;
+
+    function drawSpectrum() {
+      if (!spectrumContext) return;
+      const { clientWidth: width, clientHeight: height } = spectrum;
+      if (spectrum.width !== width || spectrum.height !== height) {
+        spectrum.width = width;
+        spectrum.height = height;
+      }
+      spectrumContext.clearRect(0, 0, width, height);
+      const bands = 28;
+      const slot = width / bands;
+      const bins = spectrumInput && frequencyBins;
+      if (bins) analyser.getByteFrequencyData(bins);
+      spectrumContext.fillStyle = getComputedStyle(spectrum).color;
+      for (let band = 0; band < bands; band++) {
+        const first = Math.floor(1.24 ** band);
+        const end = Math.floor(1.24 ** (band + 1));
+        let peak = 0;
+        for (let bin = first; bins && bin <= end; bin++) peak = Math.max(peak, bins[bin]);
+        const bar = Math.max(2, peak / 255 * height);
+        spectrumContext.fillRect(band * slot + 1, height - bar, Math.max(0, slot - 4), bar);
+      }
+      if (spectrumInput) frame = requestAnimationFrame(drawSpectrum);
+    }
+
+    function prepareSpectrum() {
+      if (!audio.captureStream || !window.AudioContext) return;
+      try {
+        if (!audioContext) {
+          audioContext = new AudioContext();
+          analyser = audioContext.createAnalyser();
+          analyser.fftSize = 2048;
+          frequencyBins = new Uint8Array(analyser.frequencyBinCount);
+        }
+        audioContext.resume().catch(() => {});
+      } catch {}
+    }
+
+    function startSpectrum() {
+      if (!analyser || !audio.hasAttribute("crossorigin") || spectrumInput) return;
+      try {
+        spectrumInput = audioContext.createMediaStreamSource(audio.captureStream());
+        spectrumInput.connect(analyser);
+        drawSpectrum();
+      } catch {}
+    }
+
+    function clearMetadata(message = "—") {
+      clearTimeout(metadataTimer);
+      metadataRequest?.abort();
+      metadataRequest = undefined;
+      track.textContent = message;
+      artist.textContent = "";
+    }
+
+    async function updateMetadata() {
+      clearTimeout(metadataTimer);
+      metadataRequest?.abort();
+      if (!medium.matches || audio.paused || audio.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+        clearMetadata();
+        return;
+      }
+      if (station !== "radio1") {
+        track.textContent = "VRT NWS";
+        return;
+      }
+      const request = new AbortController();
+      metadataRequest = request;
+      try {
+        const response = await fetch(metadataUrl, {
+          signal: AbortSignal.any([request.signal, AbortSignal.timeout(6000)]),
+          cache: "no-store"
+        });
+        const item = response.ok && response.status !== 204 ? await response.json() : null;
+        if (request.signal.aborted) return;
+        track.textContent = item?.song?.trim() || "Geen nummerinformatie beschikbaar";
+        artist.textContent = item?.artist?.trim() || "";
+      } catch {
+        if (!request.signal.aborted) track.textContent = "Geen nummerinformatie beschikbaar";
+      } finally {
+        if (!request.signal.aborted) metadataTimer = setTimeout(updateMetadata, 15000);
+      }
+    }
+
+    function remember() {
+      try { localStorage.setItem(storageKey, JSON.stringify(remembered)); } catch {}
+    }
+
+    function setVolume(value) {
+      volume.value = value;
+      audio.volume = volume.valueAsNumber / 100;
+      level.value = volume.value + "%";
+    }
+
+    function render(message) {
+      status.textContent = message;
+      playButton.setAttribute("aria-label", wantsPlayback ? "Pauzeren" : "Afspelen");
+      playButton.firstElementChild.textContent = wantsPlayback ? "❚❚" : "▶";
+      for (const button of buttons) {
+        button.setAttribute("aria-pressed", String(button.dataset.station === station));
+      }
+    }
+
+    function streamUrl() {
+      if (station === "radio1") return useFallback ? fallbackRadioUrl : radioUrl;
+      try {
+        const url = new URL(settings.newsUrl.trim() || defaultNewsUrl);
+        if (url.href === defaultNewsUrl && !useFallback) return newsAudioUrl;
+        if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) return url.href;
+      } catch {}
+      return "";
+    }
+
+    function resetStream() {
+      attempt++;
+      clearTimeout(retryTimer);
+      clearTimeout(watchdog);
+      retryTimer = watchdog = undefined;
+      clearMetadata();
+      cancelAnimationFrame(frame);
+      spectrumInput?.disconnect();
+      spectrumInput = undefined;
+      drawSpectrum();
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+
+    function stop(message = "Gestopt") {
+      wantsPlayback = false;
+      useFallback = false;
+      retryCount = 0;
+      resetStream();
+      render(message);
+    }
+
+    function retry() {
+      if (!wantsPlayback || retryTimer !== undefined) return;
+      if (!useFallback) {
+        useFallback = true;
+        startStream();
+        return;
+      }
+      resetStream();
+      const delay = retryDelays[Math.min(retryCount++, retryDelays.length - 1)];
+      render("Verbinding verbroken · opnieuw over " + delay + " s");
+      retryTimer = setTimeout(() => {
+        useFallback = false;
+        startStream();
+      }, delay * 1000);
+    }
+
+    function waitForAudio() {
+      if (!wantsPlayback || retryTimer !== undefined || watchdog !== undefined) return;
+      render("Verbinden…");
+      watchdog = setTimeout(retry, 8000);
+    }
+
+    async function startStream() {
+      resetStream();
+      const url = streamUrl();
+      if (!url) {
+        stop("Stel het streamadres voor VRT NWS in");
+        return;
+      }
+      wantsPlayback = true;
+      prepareSpectrum();
+      const currentAttempt = attempt;
+      if (useFallback || url === defaultNewsUrl) audio.removeAttribute("crossorigin");
+      else audio.crossOrigin = "anonymous";
+      audio.src = url;
+      waitForAudio();
+      try {
+        await audio.play();
+      } catch (error) {
+        if (currentAttempt !== attempt) return;
+        if (error.name === "NotAllowedError") stop("Tik op afspelen");
+        else retry();
+      }
+    }
+
+    playButton.addEventListener("click", () => wantsPlayback ? stop() : startStream());
+    for (const button of buttons) {
+      button.addEventListener("click", () => {
+        if (station === button.dataset.station) return;
+        station = remembered.station = button.dataset.station;
+        useFallback = false;
+        remember();
+        retryCount = 0;
+        startStream();
+      });
+    }
+    volume.addEventListener("input", () => {
+      setVolume(volume.value);
+      remembered.volume = volume.valueAsNumber;
+      remember();
+    });
+    audio.addEventListener("playing", () => {
+      if (!wantsPlayback || !audio.hasAttribute("src")) return;
+      clearTimeout(watchdog);
+      watchdog = undefined;
+      retryCount = 0;
+      render("Speelt");
+      startSpectrum();
+      updateMetadata();
+      if (navigator.mediaSession && typeof MediaMetadata === "function") {
+        navigator.mediaSession.metadata = new MediaMetadata({ title: station === "radio1" ? "Radio 1" : "VRT NWS" });
+      }
+    });
+    audio.addEventListener("waiting", waitForAudio);
+    audio.addEventListener("stalled", () => {
+      if (audio.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) waitForAudio();
+    });
+    audio.addEventListener("error", () => { if (audio.error) retry(); });
+    audio.addEventListener("ended", () => {
+      if (!wantsPlayback || !audio.ended) return;
+      if ([defaultNewsUrl, newsAudioUrl].includes(streamUrl())) startStream();
+      else retry();
+    });
+    window.addEventListener("pagehide", () => stop());
+    window.addEventListener("resize", () => { if (!spectrumInput) drawSpectrum(); });
+    medium.addEventListener("change", updateMetadata);
+
+    function applySettings(payload) {
+      const previous = { ...settings };
+      const controls = {
+        defaultStation: typeof defaultStation === "undefined" ? undefined : defaultStation,
+        autoplay: typeof autoplay === "undefined" ? undefined : autoplay,
+        radioVolume: typeof radioVolume === "undefined" ? undefined : radioVolume,
+        accent: typeof accent === "undefined" ? undefined : accent,
+        newsUrl: typeof newsUrl === "undefined" ? undefined : newsUrl
+      };
+      for (const name of Object.keys(settings)) {
+        settings[name] = payload?.settings?.[name] ?? controls[name] ?? settings[name];
+      }
+      if (initialized ? settings.defaultStation !== previous.defaultStation : !remembered.station) {
+        station = settings.defaultStation === "news" ? "news" : "radio1";
+        if (initialized) {
+          delete remembered.station;
+          remember();
+        }
+      }
+      if (settings.radioVolume !== previous.radioVolume && initialized) {
+        delete remembered.volume;
+        remember();
+      }
+      setVolume(remembered.volume ?? settings.radioVolume);
+      document.documentElement.style.setProperty("--accent", settings.accent);
+      if (!spectrumInput) drawSpectrum();
+      const start = !initialized && settings.autoplay;
+      initialized = true;
+      if (start || (wantsPlayback && (previous.defaultStation !== settings.defaultStation ||
+          (station === "news" && previous.newsUrl !== settings.newsUrl)))) {
+        retryCount = 0;
+        useFallback = false;
+        startStream();
+      } else if (!wantsPlayback) {
+        render(streamUrl() ? "Gestopt" : "Stel het streamadres voor VRT NWS in");
+      }
+    }
+
+    icueEvents = { onICUEInitialized: applySettings, onDataUpdated: applySettings };
+    if (typeof iCUE_initialized !== "undefined" && iCUE_initialized) applySettings();
+    else {
+      setVolume(remembered.volume ?? settings.radioVolume);
+      render(streamUrl() ? "Gestopt" : "Stel het streamadres voor VRT NWS in");
+      drawSpectrum();
+    }
+  </script>
+</body>
+</html>

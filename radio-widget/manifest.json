@@ -1,0 +1,54 @@
+{
+  "author": "Christian",
+  "id": "com.cbona.vrt-radio",
+  "name": "VRT Radio",
+  "description": "Luister naar Radio 1 en VRT NWS",
+  "version": "1.1.2",
+  "preview_icon": "resources/icon.svg",
+  "min_app_version": "5.54",
+  "min_framework_version": "1.10.0",
+  "os": [
+    {
+      "platform": "windows"
+    }
+  ],
+  "supported_devices": [
+    {
+      "type": "dashboard_lcd",
+      "features": [
+        "sensor-screen"
+      ]
+    }
+  ],
+  "interactive": true,
+  "permissions": [
+    {
+      "type": "speaker"
+    },
+    {
+      "domain": "icecast.vrtcdn.be",
+      "type": "url",
+      "port": 443
+    },
+    {
+      "domain": "progressive-audio.vrtcdn.be",
+      "type": "url",
+      "port": 443
+    },
+    {
+      "domain": "quantumcast.vrtcdn.be",
+      "type": "url",
+      "port": 443
+    },
+    {
+      "domain": "vrt.streamabc.net",
+      "type": "url",
+      "port": 443
+    },
+    {
+      "port": 443,
+      "type": "url",
+      "domain": "api.streamabc.net"
+    }
+  ]
+}

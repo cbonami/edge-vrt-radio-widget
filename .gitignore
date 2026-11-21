@@ -1,0 +1,20 @@
+# Local environment and tooling
+.env
+.env.*
+!.env.example
+node_modules/
+*.log
+coverage/
+playwright-report/
+test-results/
+
+# Editor and desktop files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Generated packages, except the download linked from the README
+*.icuewidget
+!/vrt-radio.icuewidget
